@@ -26,7 +26,7 @@ import java.util.List;
 
 public final class MainActivity extends Activity {
     private static final int ORANGE=0xfff27628, BG=0xfff4f6fa, INK=0xff1e2837, SUB=0xff718096, WHITE=Color.WHITE, BLUE=0xff336bc6;
-    private final String[] tabs={"Sağlık","Spor","Cihaz","Özet","Ben"};
+    private final String[] tabs={"Sağlık","Spor","Cihaz","AI","Ben"};
     private final String[] marks={"♥","◉","▣","✦","●"};
     private LinearLayout body,navbar;
     private ScrollView scroll;
@@ -177,7 +177,7 @@ public final class MainActivity extends Activity {
             .setNegativeButton("Vazgeç",(x,w)->x.dismiss()).show();
     }
     private void summary(){
-        heading("Yerel özet","Saat verilerini birlikte değerlendir");
+        heading("Lodos AI","Saatin yerel sağlık ve bağlantı özeti");
         LinearLayout p=panel();
         section(p,"Durum özeti","Bağlantı: "+(state()==null?"Hazırlanıyor":state().phase)+
             "\nPil: "+(state()!=null&&state().battery>=0?state().battery+"%":"Veri yok")+
