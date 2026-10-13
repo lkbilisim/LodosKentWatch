@@ -14,6 +14,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -148,12 +149,13 @@ public final class MainActivity extends Activity {
         gap(hero,4);hero.addView(label("Üretici veri oturumu: Doğrulanmadı",13,0xffffd6b4,false));
         LinearLayout.LayoutParams top=new LinearLayout.LayoutParams(-1,-2);top.bottomMargin=dp(15);body.addView(hero,top);
         LinearLayout p=panel();
-        section(p,"Bağlantı işlemleri","İlk eşleştirme ve BLE bağlantısı farklı işlemlerdir.");
+        section(p,"Bağlantı işlemleri","BLE veri bağlantısı ile telefon görüşmesi için Bluetooth ses bağlantısı farklıdır.");
         if(!permitted())button(p,"Bluetooth izinlerini ver",ORANGE,this::permissions);
         button(p,"Saatleri tara",ORANGE,()->act(()->service.scan()));
         button(p,"Yeniden bağlan",BLUE,()->act(()->service.reconnect()));
+        button(p,"Telefon görüşmesi / Bluetooth ayarları",INK,this::openBluetoothSettings);
         button(p,"Bağlantıyı durdur",INK,()->{if(service!=null)service.disconnect();});
-        p=panel();section(p,"Bulunan saatler","Listeden saati seçince Android eşleştirme seçeneği açılır.");
+        p=panel();section(p,"Bulunan saatler","Cihaz seçimi veri bağlantısını başlatır. Saatten arama için ayrı ses bağlantısı gerekebilir.");
         if(s==null||s.devices.isEmpty())p.addView(label("Henüz saat bulunmadı.",13,SUB,false));
         else for(WatchService.Device d:s.devices){
             button(p,d.name+"  •  "+d.rssi+" dBm",BLUE,()->choose(d));
@@ -164,17 +166,28 @@ public final class MainActivity extends Activity {
             "\nSinyal: "+(s==null||s.rssi==-127?"—":s.rssi+" dBm")+
             "\nGATT: "+(s!=null&&s.ready?"Hazır":"Hazır değil")+
             "\nServis keşfi: "+(s==null?"—":s.serviceInfo)+
-            "\nSistem eşleştirmesi: "+(s==null?"—":s.bondStatus));
+            "\nAndroid BLE eşleştirmesi: "+(s==null?"—":s.bondStatus));
         button(p,"Tanılama raporunu paylaş",INK,this::share);
-        p=panel();section(p,"SAAT AYARLARI","Kadran, titreşim, uyandırmak için kaldır, otomatik nabız ve bildirim ayarları; üretici komutları doğrulanana kadar güvenli biçimde kapalı.");
+        p=panel();section(p,"Saat özellikleri","UART ve AE02 kanalları dinleniyor. Üreticinin veri oturumu çözümlenene kadar kadran, sağlık senkronizasyonu, arama ve bildirim yönetimi etkin değil.");
     }
     private void choose(WatchService.Device d){
         new AlertDialog.Builder(this)
-            .setTitle("DSMART A8U")
-            .setMessage("Saatle nasıl bağlantı kurulsun?\n\n“Telefonla eşleştir” Android'in sistem eşleştirmesini ister. Cihaz daha önce eşleşmişse veya BLE eşleştirmesi gerekmiyorsa ayrıca onay penceresi açılmayabilir.")
-            .setPositiveButton("Telefonla eşleştir",(x,w)->act(()->service.selectWithBond(d.address)))
-            .setNeutralButton("Yalnız BLE bağlan",(x,w)->act(()->service.select(d.address)))
-            .setNegativeButton("Vazgeç",(x,w)->x.dismiss()).show();
+            .setTitle(d.name)
+            .setMessage("Saatin veri bağlantısı (BLE) ile telefon görüşmesi (klasik Bluetooth ses profili) ayrı olabilir.\n\nAndroid'de cihaz zaten eşleşmişse yeni onay penceresi çıkmayabilir.\n\nÖnce BLE bağlan'ı seç. Telefonla konuşma için ayrıca Bluetooth ayarlarını aç.")
+            .setPositiveButton("BLE bağlan",(x,w)->act(()->service.select(d.address)))
+            .setNeutralButton("Android eşleştirmesini denetle",(x,w)->act(()->service.selectWithBond(d.address)))
+            .setNegativeButton("Arama Bluetooth ayarları",(x,w)->openBluetoothSettings())
+            .show();
+    }
+    private void openBluetoothSettings(){
+        new AlertDialog.Builder(this)
+            .setTitle("Saatten telefon görüşmesi")
+            .setMessage("Saatin BLE veri bağlantısı kurulmuş olsa da mikrofon/hoparlör üzerinden görüşmeler için ayrı Bluetooth arama/ses bağlantısı gerekebilir.\n\nAndroid Bluetooth ayarlarında saatin ses/arama cihazını bulup eşleştir. Aynı isim olmak zorunda değil. Bu uygulama sistemin gizli ses profili bağlantılarını zorla açamaz.")
+            .setPositiveButton("Bluetooth ayarlarını aç",(dialog,which)->{
+                try{startActivity(new Intent(Settings.ACTION_BLUETOOTH_SETTINGS));}
+                catch(RuntimeException e){Toast.makeText(this,"Bluetooth ayarları açılamadı",Toast.LENGTH_LONG).show();}
+            })
+            .setNegativeButton("Vazgeç",null).show();
     }
     private void summary(){
         heading("Lodos AI","Saatin yerel sağlık ve bağlantı özeti");
@@ -186,10 +199,11 @@ public final class MainActivity extends Activity {
     }
     private void profile(){
         heading("Ben","Uygulama ve gizlilik");
-        LinearLayout p=panel();section(p,"LodosKentWatch","2.0.0-alpha2 • geliştirici önizlemesi");
-        p=panel();section(p,"Bildirimler ve aramalar","Saatin özel protokolü henüz doğrulanmadığı için saat bildirimlerini ve çağrı kontrollerini taklit etmiyoruz.");
+        LinearLayout p=panel();section(p,"LodosKentWatch","2.0.0-alpha3 • bağlantı geliştirme sürümü");
+        p=panel();section(p,"Bildirimler ve aramalar","Bildirim protokolü doğrulanmadı. Telefon görüşmesi bağlantısı için Android Bluetooth ayarlarını kullan.");
         p=panel();section(p,"Gizlilik","Hesap ve internet erişimi zorunlu değil. Tanılama raporu yalnızca sen paylaşırsan dışarı çıkar.");
         button(p,"Bağlantı raporunu paylaş",BLUE,this::share);
+        button(p,"Bluetooth arama ayarlarını aç",INK,this::openBluetoothSettings);
     }
     private boolean permitted(){
         if(Build.VERSION.SDK_INT>=31)return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED
