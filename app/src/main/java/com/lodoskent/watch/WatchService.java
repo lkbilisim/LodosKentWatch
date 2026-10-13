@@ -45,6 +45,7 @@ public final class WatchService extends Service {
     private static final UUID HR=UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD=UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
     private static final UUID UART=UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+    private static final UUID AE02=UUID.fromString("0000ae02-0000-1000-8000-00805f9b34fb");
     private static final class Op {
         static final int SUB=1,READ=2,RSSI=3;
         final int type;final BluetoothGattCharacteristic charac;
@@ -140,38 +141,55 @@ public final class WatchService extends Service {
     }
     public void select(String a){
         if(a==null||!BluetoothAdapter.checkBluetoothAddress(a))return;
+        if(a.equalsIgnoreCase(address)&&ready&&gatt!=null){
+            append("Saat zaten bağlı; mevcut GATT oturumu korunuyor");return;
+        }
         address=a;attempts=0;manualStop=false;pairPending=false;cancelBondWatchdog();
         getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
         cancelRetry();stopScan();closeGatt();scheduleRetry(250,"Saat seçildi");
     }
-    /** İsteğe bağlı Android sistem eşleştirmesi. BLE bağlantısı bundan bağımsızdır. */
+    /** Android pairing controls link security, NOT the separate voice/audio profile.
+     * Never tear down an already healthy GATT connection to check bond state. */
     public void selectWithBond(String a){
         if(a==null||!BluetoothAdapter.checkBluetoothAddress(a)||!enabled())return;
-        address=a;attempts=0;manualStop=false;pairPending=false;cancelBondWatchdog();
+        boolean existing=a.equalsIgnoreCase(address)&&gatt!=null&&ready;
+        manualStop=false;pairPending=false;cancelBondWatchdog();
+        address=a;
         getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
-        cancelRetry();cancelBondWatchdog();stopScan();closeGatt();
         try{
             BluetoothDevice d=adapter.getRemoteDevice(a);
             int bs=d.getBondState();
             if(bs==BluetoothDevice.BOND_BONDED){
-                bondStatus="Android eşleştirmesi zaten var";append(bondStatus);scheduleRetry(200,"Kayıtlı eşleştirme");
-            }else if(bs==BluetoothDevice.BOND_BONDING){
-                pairPending=true;bondStatus="Sistem eşleştirmesi sürüyor";status("EŞLEŞTİRİLİYOR","Android onayı bekleniyor");startBondWatchdog();
+                bondStatus="Android eşleştirmesi zaten var";
+                append("Android BLE eşleştirmesi var. Arama/ses ayrı Bluetooth profili gerektirebilir.");
+                if(!existing){cancelRetry();stopScan();closeGatt();scheduleRetry(250,"Kayıtlı cihaz");}
+                // Preserve the existing connection if it is already up.
+                return;
+            }
+            if(existing){
+                // A device may connect to a GATT service without OS bonding.
+                append("BLE veri bağlantısı zaten açık; sistem eşleştirmesi opsiyonel.");
+                return;
+            }
+            cancelRetry();stopScan();closeGatt();
+            if(bs==BluetoothDevice.BOND_BONDING){
+                pairPending=true;bondStatus="Sistem eşleştirmesi sürüyor";
+                status("EŞLEŞTİRİLİYOR","Android onayı bekleniyor");startBondWatchdog();
             }else{
                 pairPending=d.createBond();
                 if(pairPending){
-                    bondStatus="Android eşleştirme isteği gönderildi";
+                    bondStatus="Android sistem eşleştirmesi istendi";
                     status("EŞLEŞTİRİLİYOR","Telefon veya saat onayı bekleniyor");
                     startBondWatchdog();
                 }else{
-                    bondStatus="Cihaz sistem eşleştirmesini başlatmadı";
-                    scheduleRetry(500,"Yalnızca BLE veri bağlantısı deneniyor");
+                    bondStatus="Saat sistem eşleştirmesini başlatmadı";
+                    scheduleRetry(500,"BLE veri bağlantısı deneniyor");
                 }
             }
         }catch(RuntimeException e){
-            pairPending=false;bondStatus="Android eşleştirme işlemi başarısız";
-            append("createBond: "+e.getClass().getSimpleName());
-            scheduleRetry(500,"BLE veri bağlantısı deneniyor");
+            pairPending=false;bondStatus="Sistem eşleştirmesi başarısız";
+            append("createBond hatası: "+e.getClass().getSimpleName());
+            if(!existing)scheduleRetry(500,"BLE veri bağlantısı deneniyor");
         }
     }
     private void startBondWatchdog(){
@@ -195,7 +213,11 @@ public final class WatchService extends Service {
     }
     public void scan(){
         manualStop=false;getSharedPreferences("watch",MODE_PRIVATE).edit().putBoolean("stop",false).apply();
-        cancelRetry();pairPending=false;cancelBondWatchdog();stopScan();closeGatt();nearby.clear();beginScan(false);
+        cancelRetry();pairPending=false;cancelBondWatchdog();stopScan();nearby.clear();
+        // Scan must not arbitrarily drop the currently established GATT link.
+        if(ready&&gatt!=null){status("GATT HAZIR","Saat bağlı; bağlantıyı koruyarak cihazları tarıyor");}
+        else closeGatt();
+        beginScan(false);
     }
     private void ensure(){
         if(manualStop||pairPending||scanning||gatt!=null||!enabled())return;
@@ -229,7 +251,7 @@ public final class WatchService extends Service {
             String upper=n.toUpperCase(Locale.ROOT);
             if(!match&&!upper.contains("DSMART")&&!upper.contains("A8")&&!upper.contains("WATCH"))return;
             nearby.put(a,new Device(a,n.isEmpty()?"İsimsiz saat":n,result.getRssi()));refresh();
-            if(match){name=n;stopScan();connect(d);}
+            if(match&&gatt==null&&!pairPending){name=n;stopScan();connect(d);}
         }catch(RuntimeException e){append("Tarama sonucu okunamadı");}
     }
     private void stopScan(){
@@ -300,14 +322,14 @@ public final class WatchService extends Service {
             for(BluetoothGattCharacteristic c:svc.getCharacteristics()){
                 if(c.getUuid().equals(BAT)&&(c.getProperties()&BluetoothGattCharacteristic.PROPERTY_READ)!=0)
                     ops.add(new Op(Op.READ,c));
-                if((c.getUuid().equals(HR)||c.getUuid().equals(UART))
+                if((c.getUuid().equals(HR)||c.getUuid().equals(UART)||c.getUuid().equals(AE02))
                     && c.getDescriptor(CCCD)!=null
                     && (c.getProperties()&(BluetoothGattCharacteristic.PROPERTY_NOTIFY|BluetoothGattCharacteristic.PROPERTY_INDICATE))!=0){
                     ops.add(new Op(Op.SUB,c));channels++;
                 }
             }
         }
-        serviceInfo=count+" servis, "+channels+" bildirim adayı";
+        serviceInfo=count+" servis, "+channels+" bildirim adayı (UART + AE02 dahil)";
         append("GATT servis UUID: "+report);
         attempts=0;ready=true;status("GATT HAZIR","Servisler keşfedildi. Üretici protokolü doğrulanmadı.");
         pump();ui.postDelayed(()->{if(ready&&gatt!=null){ops.add(new Op(Op.RSSI,null));pump();}},15000);
@@ -338,6 +360,9 @@ public final class WatchService extends Service {
     private void finish(int type,int code){
         if(currentOp==null||currentOp.type!=type)return;
         if(opWatchdog!=null)ui.removeCallbacks(opWatchdog);opWatchdog=null;
+        if(currentOp.type==Op.SUB){
+            append("Bildirim CCCD "+currentOp.charac.getUuid()+" : "+(code==BluetoothGatt.GATT_SUCCESS?"etkin":"HATA "+code));
+        }
         currentOp=null;if(code!=BluetoothGatt.GATT_SUCCESS)append("GATT hata: "+code);
         pump();refresh();
     }
@@ -356,7 +381,7 @@ public final class WatchService extends Service {
             if(hr>=25&&hr<=240)heartRate=hr;
         }else{
             StringBuilder hex=new StringBuilder();for(int i=0;i<Math.min(data.length,32);i++)hex.append(String.format(Locale.US,"%02X",data[i]));
-            append("GATT bildirim "+c.getUuid()+" "+hex);
+            append("Ham veri ["+c.getUuid()+"] "+hex+" (üretici protokolü doğrulanmadı)");
         }
         refresh();
     }
