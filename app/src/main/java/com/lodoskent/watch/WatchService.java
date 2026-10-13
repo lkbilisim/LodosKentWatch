@@ -140,14 +140,14 @@ public final class WatchService extends Service {
     }
     public void select(String a){
         if(a==null||!BluetoothAdapter.checkBluetoothAddress(a))return;
-        address=a;attempts=0;manualStop=false;
+        address=a;attempts=0;manualStop=false;pairPending=false;cancelBondWatchdog();
         getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
         cancelRetry();stopScan();closeGatt();scheduleRetry(250,"Saat seçildi");
     }
     /** İsteğe bağlı Android sistem eşleştirmesi. BLE bağlantısı bundan bağımsızdır. */
     public void selectWithBond(String a){
         if(a==null||!BluetoothAdapter.checkBluetoothAddress(a)||!enabled())return;
-        address=a;attempts=0;manualStop=false;
+        address=a;attempts=0;manualStop=false;pairPending=false;cancelBondWatchdog();
         getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
         cancelRetry();cancelBondWatchdog();stopScan();closeGatt();
         try{
