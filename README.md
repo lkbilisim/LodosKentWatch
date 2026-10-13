@@ -1,10 +1,17 @@
-# LodosKentWatch 2.0.0-alpha1
+# LodosKentWatch 2.0.0-alpha2
 
 Daniel Klein / DSMART A8U için **deneysel** Android BLE bağlantı uygulaması.
 
 ## Durum
 
 Bu proje, SMART-TIME PRO'nun birebir kopyası değildir. Orijinal uygulamanın üreticiye özgü veri protokolü saat üzerinde henüz doğrulanmadı. Özellikle **adım, uyku, SpO2, tansiyon, çağrılar, bildirimler ve kadran aktarımı henüz yoktur**. Yazılım; BLE bağlantısı, kopma-sonrası yeniden deneme, servis keşfi, uygun cihazlarda standart pil/nabız okuma ve tanılama için hazırlanmıştır. Bağlantı kararlılığı gerçek DSMART A8U ile ölçülmeden garanti edilemez.
+
+### Arayüz ve eşleştirme (alpha2)
+- Sağlık, Spor, Cihaz, Yerel Özet ve Ben sekmeleri geri eklendi. Bu, eski APK'nın görselinin birebir kopyası değil, yeniden tasarlanmış bir önizlemedir.
+- Saat seçildiğinde iki farklı seçenek var: **Telefonla eşleştir** (`BluetoothDevice.createBond`) ve **Yalnız BLE bağlan** (`connectGatt`).
+- Android sistem onay penceresi cihazın daha önce eşleştirilmiş olmasına, Bluetooth türüne ve saat yazılımına bağlıdır; her durumda açılacağı garanti edilmez.
+- Eşleştirme, GATT ve üretici protokolü **ayrı durumlar** olarak gösterilir.
+- Tanılama raporuna GATT karakteristik UUID ve property değerleri eklendi.
 
 ### Teknik kapsam
 
