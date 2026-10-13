@@ -117,7 +117,7 @@ public final class WatchService extends Service {
     public void removeListener(Listener l){listeners.remove(l);}
     public State snapshot(){return new State(phase,detail,name,serviceInfo,bondStatus,battery,heartRate,rssi,ready,new ArrayList<>(nearby.values()));}
     public String diagnostics(){
-        StringBuilder s=new StringBuilder("LodosKentWatch v2.0.0-alpha1\nDurum: "+phase+"\n"+detail+"\n");
+        StringBuilder s=new StringBuilder("LodosKentWatch v2.0.0-alpha3\nDurum: "+phase+"\n"+detail+"\n");
         s.append("Servisler: ").append(serviceInfo).append("\nEşleştirme: ").append(bondStatus).append("\n");
         for(String e:log)s.append(e).append('\n');return s.toString();
     }
@@ -233,10 +233,10 @@ public final class WatchService extends Service {
             scanCallback=new ScanCallback(){
                 @Override public void onScanResult(int type,ScanResult result){ui.post(()->accept(result));}
                 @Override public void onBatchScanResults(List<ScanResult> list){for(ScanResult r:list)ui.post(()->accept(r));}
-                @Override public void onScanFailed(int error){ui.post(()->{stopScan();scheduleRetry(delay(),"Tarama hatası: "+error);});}
+                @Override public void onScanFailed(int error){ui.post(()->{stopScan();if(ready&&gatt!=null)status("GATT HAZIR","Tarama hatası: "+error+", bağlantı korundu");else scheduleRetry(delay(),"Tarama hatası: "+error);});}
             };
             scanner.startScan(null,new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),scanCallback);
-            scanStop=()->{stopScan();if(!address.isEmpty())scheduleRetry(delay(),"Saat bulunamadı");else status("HAZIR","Tarama bitti");};
+            scanStop=()->{stopScan();if(ready&&gatt!=null)status("GATT HAZIR","Tarama bitti, mevcut BLE bağlantısı korundu");else if(!address.isEmpty())scheduleRetry(delay(),"Saat bulunamadı");else status("HAZIR","Tarama bitti");};
             ui.postDelayed(scanStop,12000);
         }catch(RuntimeException e){stopScan();scheduleRetry(delay(),"Tarama başlatılamadı");}
     }
