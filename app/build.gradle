@@ -1,13 +1,16 @@
 plugins { id 'com.android.application' }
 android {
-    namespace 'com.lodos.hci'
+    namespace 'com.lodoskent.watch'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.lodoskent.hcianalyzer'
+        applicationId 'com.lodoskent.watch'
         minSdk 26
         targetSdk 35
         versionCode 1
-        versionName '0.1.0'
+        versionName '0.1.0-ble'
+    }
+    buildTypes {
+        debug { debuggable false }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
