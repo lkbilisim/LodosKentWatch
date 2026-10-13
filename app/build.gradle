@@ -1,0 +1,16 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.lodoskent.watch'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'com.lodoskent.watch'
+        minSdk 26
+        targetSdk 35
+        versionCode 200
+        versionName '2.0.0-alpha1'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
