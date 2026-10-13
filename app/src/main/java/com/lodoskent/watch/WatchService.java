@@ -16,12 +16,12 @@ public final class WatchService extends Service {
         Device(String a,String n,int r){address=a;name=n;rssi=r;}
     }
     public static final class State {
-        public final String phase,detail,deviceName,serviceInfo;
+        public final String phase,detail,deviceName,serviceInfo,bondStatus;
         public final int battery,heartRate,rssi;
         public final boolean ready;
         public final List<Device> devices;
-        State(String p,String d,String n,String info,int b,int h,int r,boolean ok,List<Device> list){
-            phase=p;detail=d;deviceName=n;serviceInfo=info;battery=b;heartRate=h;rssi=r;ready=ok;devices=list;
+        State(String p,String d,String n,String info,String bond,int b,int h,int r,boolean ok,List<Device> list){
+            phase=p;detail=d;deviceName=n;serviceInfo=info;bondStatus=bond;battery=b;heartRate=h;rssi=r;ready=ok;devices=list;
         }
     }
     public final class LocalBinder extends Binder { public WatchService service(){return WatchService.this;} }
@@ -36,11 +36,11 @@ public final class WatchService extends Service {
     private BluetoothLeScanner scanner;
     private ScanCallback scanCallback;
     private BluetoothGatt gatt;
-    private Runnable scanStop,retry,watchdog,opWatchdog;
+    private Runnable scanStop,retry,watchdog,opWatchdog,bondWatchdog;
     private Op currentOp;
     private int epoch,attempts,battery=-1,heartRate=-1,rssi=-127;
-    private boolean manualStop,scanning,ready,foreground;
-    private String address="",name="",phase="HAZIR",detail="Cihaz aranabilir",serviceInfo="—";
+    private boolean manualStop,scanning,ready,foreground,pairPending;
+    private String address="",name="",phase="HAZIR",detail="Cihaz aranabilir",serviceInfo="—",bondStatus="Eşleştirme bilinmiyor";
     private static final UUID BAT=UUID.fromString("00002a19-0000-1000-8000-00805f9b34fb");
     private static final UUID HR=UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb");
     private static final UUID CCCD=UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
@@ -52,6 +52,24 @@ public final class WatchService extends Service {
     }
     private final BroadcastReceiver btReceiver=new BroadcastReceiver(){
         @Override public void onReceive(Context context,Intent intent){
+            if(BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(intent.getAction())){
+                BluetoothDevice device;
+                if(Build.VERSION.SDK_INT>=33)device=intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE,BluetoothDevice.class);
+                else device=intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if(device==null||address.isEmpty()||!allowed())return;
+                try{if(!address.equalsIgnoreCase(device.getAddress()))return;}
+                catch(SecurityException e){return;}
+                int bs=intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE,BluetoothDevice.BOND_NONE);
+                if(bs==BluetoothDevice.BOND_BONDING){bondStatus="Android eşleştirmesi sürüyor";status("EŞLEŞTİRİLİYOR","Sistem onayı bekleniyor");}
+                else if(bs==BluetoothDevice.BOND_BONDED){
+                    bondStatus="Android eşleştirmesi tamam";append(bondStatus);
+                    if(pairPending){pairPending=false;cancelBondWatchdog();scheduleRetry(350,"Android eşleştirmesi tamamlandı");}
+                }else if(bs==BluetoothDevice.BOND_NONE){
+                    bondStatus="Android eşleştirmesi yok";append("Android eşleştirmesi kurulmadı");
+                    if(pairPending){pairPending=false;cancelBondWatchdog();scheduleRetry(500,"BLE veri bağlantısı deneniyor");}
+                }
+                refresh();return;
+            }
             if(!BluetoothAdapter.ACTION_STATE_CHANGED.equals(intent.getAction()))return;
             int state=intent.getIntExtra(BluetoothAdapter.EXTRA_STATE,BluetoothAdapter.ERROR);
             if(state==BluetoothAdapter.STATE_OFF||state==BluetoothAdapter.STATE_TURNING_OFF){
@@ -64,7 +82,9 @@ public final class WatchService extends Service {
         adapter=m==null?null:m.getAdapter();
         address=getSharedPreferences("watch",MODE_PRIVATE).getString("target","");
         manualStop=getSharedPreferences("watch",MODE_PRIVATE).getBoolean("stop",false);
-        registerReceiver(btReceiver,new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
+        IntentFilter filter=new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED);
+        filter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+        registerReceiver(btReceiver,filter);
         append("Bağlantı servisi başlatıldı");
     }
     @Override public IBinder onBind(Intent i){return binder;}
@@ -87,17 +107,17 @@ public final class WatchService extends Service {
         return START_STICKY;
     }
     @Override public void onDestroy(){
-        manualStop=true;cancelRetry();stopScan();closeGatt();
+        manualStop=true;cancelRetry();cancelBondWatchdog();pairPending=false;stopScan();closeGatt();
         try{unregisterReceiver(btReceiver);}catch(RuntimeException ignored){}
         ui.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
     public void addListener(Listener l){if(!listeners.contains(l))listeners.add(l);l.changed();}
     public void removeListener(Listener l){listeners.remove(l);}
-    public State snapshot(){return new State(phase,detail,name,serviceInfo,battery,heartRate,rssi,ready,new ArrayList<>(nearby.values()));}
+    public State snapshot(){return new State(phase,detail,name,serviceInfo,bondStatus,battery,heartRate,rssi,ready,new ArrayList<>(nearby.values()));}
     public String diagnostics(){
         StringBuilder s=new StringBuilder("LodosKentWatch v2.0.0-alpha1\nDurum: "+phase+"\n"+detail+"\n");
-        s.append("Servisler: ").append(serviceInfo).append("\n");
+        s.append("Servisler: ").append(serviceInfo).append("\nEşleştirme: ").append(bondStatus).append("\n");
         for(String e:log)s.append(e).append('\n');return s.toString();
     }
     private void append(String m){
@@ -124,6 +144,45 @@ public final class WatchService extends Service {
         getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
         cancelRetry();stopScan();closeGatt();scheduleRetry(250,"Saat seçildi");
     }
+    /** İsteğe bağlı Android sistem eşleştirmesi. BLE bağlantısı bundan bağımsızdır. */
+    public void selectWithBond(String a){
+        if(a==null||!BluetoothAdapter.checkBluetoothAddress(a)||!enabled())return;
+        address=a;attempts=0;manualStop=false;
+        getSharedPreferences("watch",MODE_PRIVATE).edit().putString("target",a).putBoolean("stop",false).apply();
+        cancelRetry();cancelBondWatchdog();stopScan();closeGatt();
+        try{
+            BluetoothDevice d=adapter.getRemoteDevice(a);
+            int bs=d.getBondState();
+            if(bs==BluetoothDevice.BOND_BONDED){
+                bondStatus="Android eşleştirmesi zaten var";append(bondStatus);scheduleRetry(200,"Kayıtlı eşleştirme");
+            }else if(bs==BluetoothDevice.BOND_BONDING){
+                pairPending=true;bondStatus="Sistem eşleştirmesi sürüyor";status("EŞLEŞTİRİLİYOR","Android onayı bekleniyor");startBondWatchdog();
+            }else{
+                pairPending=d.createBond();
+                if(pairPending){
+                    bondStatus="Android eşleştirme isteği gönderildi";
+                    status("EŞLEŞTİRİLİYOR","Telefon veya saat onayı bekleniyor");
+                    startBondWatchdog();
+                }else{
+                    bondStatus="Cihaz sistem eşleştirmesini başlatmadı";
+                    scheduleRetry(500,"Yalnızca BLE veri bağlantısı deneniyor");
+                }
+            }
+        }catch(RuntimeException e){
+            pairPending=false;bondStatus="Android eşleştirme işlemi başarısız";
+            append("createBond: "+e.getClass().getSimpleName());
+            scheduleRetry(500,"BLE veri bağlantısı deneniyor");
+        }
+    }
+    private void startBondWatchdog(){
+        cancelBondWatchdog();
+        bondWatchdog=()->{bondWatchdog=null;if(pairPending){
+            pairPending=false;bondStatus="Android eşleştirmesi zaman aşımına uğradı";
+            scheduleRetry(500,"Yalnız BLE bağlantısı deneniyor");
+        }};
+        ui.postDelayed(bondWatchdog,30000);
+    }
+    private void cancelBondWatchdog(){if(bondWatchdog!=null)ui.removeCallbacks(bondWatchdog);bondWatchdog=null;}
     public void reconnect(){
         if(address.isEmpty()){scan();return;}
         attempts=0;manualStop=false;
@@ -131,15 +190,15 @@ public final class WatchService extends Service {
         cancelRetry();stopScan();closeGatt();scheduleRetry(250,"Elle bağlantı");
     }
     public void disconnect(){
-        manualStop=true;getSharedPreferences("watch",MODE_PRIVATE).edit().putBoolean("stop",true).apply();
+        manualStop=true;pairPending=false;cancelBondWatchdog();getSharedPreferences("watch",MODE_PRIVATE).edit().putBoolean("stop",true).apply();
         cancelRetry();stopScan();closeGatt();status("DURDURULDU","Otomatik bağlantı kapalı");
     }
     public void scan(){
         manualStop=false;getSharedPreferences("watch",MODE_PRIVATE).edit().putBoolean("stop",false).apply();
-        cancelRetry();stopScan();closeGatt();nearby.clear();beginScan(false);
+        cancelRetry();pairPending=false;cancelBondWatchdog();stopScan();closeGatt();nearby.clear();beginScan(false);
     }
     private void ensure(){
-        if(manualStop||scanning||gatt!=null||!enabled())return;
+        if(manualStop||pairPending||scanning||gatt!=null||!enabled())return;
         if(address.isEmpty()||attempts>=2){beginScan(!address.isEmpty());return;}
         try {connect(adapter.getRemoteDevice(address));}
         catch(RuntimeException ex){scheduleRetry(delay(),"Kayıtlı cihaz bulunamadı");}
@@ -233,7 +292,11 @@ public final class WatchService extends Service {
         ops.clear();currentOp=null;int count=0,channels=0;
         StringBuilder report=new StringBuilder();
         for(BluetoothGattService svc:g.getServices()){
-            count++;report.append(svc.getUuid()).append(" ");
+            count++;report.append(svc.getUuid()).append(" {");
+            for(BluetoothGattCharacteristic c:svc.getCharacteristics()){
+                report.append(c.getUuid()).append(":props=").append(c.getProperties()).append("; ");
+            }
+            report.append("} ");
             for(BluetoothGattCharacteristic c:svc.getCharacteristics()){
                 if(c.getUuid().equals(BAT)&&(c.getProperties()&BluetoothGattCharacteristic.PROPERTY_READ)!=0)
                     ops.add(new Op(Op.READ,c));
@@ -244,7 +307,7 @@ public final class WatchService extends Service {
                 }
             }
         }
-        serviceInfo=count+" servis, "+channels+" bildirim kanalı";
+        serviceInfo=count+" servis, "+channels+" bildirim adayı";
         append("GATT servis UUID: "+report);
         attempts=0;ready=true;status("GATT HAZIR","Servisler keşfedildi. Üretici protokolü doğrulanmadı.");
         pump();ui.postDelayed(()->{if(ready&&gatt!=null){ops.add(new Op(Op.RSSI,null));pump();}},15000);
